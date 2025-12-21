@@ -18,6 +18,15 @@ SCOPES = ['https://www.googleapis.com/auth/adwords']
 API_VERSION = "v19"
 
 
+class GoogleAdsAPIError(Exception):
+    """Exception raised for Google Ads API errors."""
+
+    def __init__(self, message: str, status_code: int = None, response_text: str = None):
+        self.status_code = status_code
+        self.response_text = response_text
+        super().__init__(message)
+
+
 def format_customer_id(customer_id: str) -> str:
     """Format customer ID to ensure it's 10 digits without dashes."""
     customer_id = str(customer_id)
@@ -163,7 +172,11 @@ class GoogleAdsClient:
         response = requests.get(url, headers=headers)
 
         if response.status_code != 200:
-            raise Exception(f"API Error: {response.text}")
+            raise GoogleAdsAPIError(
+                f"API Error: {response.text}",
+                status_code=response.status_code,
+                response_text=response.text
+            )
 
         return response.json()
 
@@ -181,7 +194,11 @@ class GoogleAdsClient:
         response = requests.post(url, headers=headers, json=payload)
 
         if response.status_code != 200:
-            raise Exception(f"API Error: {response.text}")
+            raise GoogleAdsAPIError(
+                f"API Error: {response.text}",
+                status_code=response.status_code,
+                response_text=response.text
+            )
 
         return response.json()
 
@@ -199,7 +216,11 @@ class GoogleAdsClient:
         response = requests.post(url, headers=headers, json=payload)
 
         if response.status_code != 200:
-            raise Exception(f"API Error: {response.text}")
+            raise GoogleAdsAPIError(
+                f"API Error: {response.text}",
+                status_code=response.status_code,
+                response_text=response.text
+            )
 
         return response.json()
 

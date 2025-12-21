@@ -107,7 +107,7 @@ async def get_campaign(
                     'channel_type': campaign.get('advertisingChannelType'),
                     'bidding_strategy': campaign.get('biddingStrategyType'),
                 }
-        raise Exception(f"Campaign not found: {campaign_id} (mock mode)")
+        raise ValueError(f"Campaign not found: {campaign_id} (mock mode)")
 
     query = f"""
         SELECT
@@ -126,7 +126,7 @@ async def get_campaign(
     result = client.search(customer_id, query)
 
     if not result.get('results'):
-        raise Exception(f"Campaign not found: {campaign_id}")
+        raise ValueError(f"Campaign not found: {campaign_id}")
 
     campaign = result['results'][0].get('campaign', {})
     return {

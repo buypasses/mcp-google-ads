@@ -6,7 +6,7 @@ Pure functions for Google Ads account operations.
 
 from typing import Dict, List, Any
 
-from .client import GoogleAdsClient, format_customer_id
+from .client import GoogleAdsClient, GoogleAdsAPIError, format_customer_id
 from .mock_data import MOCK_ACCOUNTS, MOCK_ACCOUNT_INFO
 
 
@@ -64,7 +64,7 @@ async def get_account_currency(
     result = client.search(customer_id, query)
 
     if not result.get('results'):
-        raise Exception(f"Account not found: {customer_id}")
+        raise ValueError(f"Account not found: {customer_id}")
 
     return result['results'][0].get('customer', {}).get('currencyCode', 'USD')
 
@@ -101,7 +101,7 @@ async def get_account_info(
     result = client.search(customer_id, query)
 
     if not result.get('results'):
-        raise Exception(f"Account not found: {customer_id}")
+        raise ValueError(f"Account not found: {customer_id}")
 
     customer = result['results'][0].get('customer', {})
     return {
@@ -132,7 +132,7 @@ async def health_check(client: GoogleAdsClient) -> Dict[str, Any]:
             'account_ids': accounts[:5],  # Limit to first 5
             'using_mock_data': client.using_mock_data,
         }
-    except Exception as e:
+    except (GoogleAdsAPIError, ConnectionError, TimeoutError, ValueError) as e:
         return {
             'status': 'error',
             'error': str(e),
