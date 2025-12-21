@@ -61,7 +61,7 @@ async def get_ad_performance(
             metrics.cost_micros,
             metrics.conversions
         FROM ad_group_ad
-        WHERE segments.date DURING LAST_{days}DAYS
+        WHERE segments.date DURING LAST_{days}_DAYS
         ORDER BY metrics.impressions DESC
         LIMIT {limit}
     """

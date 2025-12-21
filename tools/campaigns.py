@@ -187,7 +187,7 @@ async def get_campaign_performance(
             metrics.conversions,
             metrics.average_cpc
         FROM campaign
-        WHERE segments.date DURING LAST_{days}DAYS
+        WHERE segments.date DURING LAST_{days}_DAYS
         ORDER BY metrics.cost_micros DESC
         LIMIT {limit}
     """

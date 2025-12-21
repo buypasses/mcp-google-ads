@@ -63,7 +63,7 @@ async def get_keyword_performance(
             metrics.ctr,
             metrics.average_cpc
         FROM keyword_view
-        WHERE segments.date DURING LAST_{days}DAYS
+        WHERE segments.date DURING LAST_{days}_DAYS
         ORDER BY metrics.impressions DESC
         LIMIT {limit}
     """
@@ -141,7 +141,7 @@ async def get_search_terms_report(
             metrics.cost_micros,
             metrics.conversions
         FROM search_term_view
-        WHERE segments.date DURING LAST_{days}DAYS
+        WHERE segments.date DURING LAST_{days}_DAYS
         ORDER BY metrics.impressions DESC
         LIMIT {limit}
     """
@@ -278,7 +278,7 @@ async def get_conversion_report(
             metrics.cost_per_conversion,
             metrics.conversions_from_interactions_rate
         FROM campaign
-        WHERE segments.date DURING LAST_{days}DAYS
+        WHERE segments.date DURING LAST_{days}_DAYS
             AND metrics.conversions > 0
         ORDER BY metrics.conversions DESC
         LIMIT {limit}
