@@ -54,6 +54,34 @@ class GoogleAdsClient:
         self.client_secret = client_secret or os.environ.get("GOOGLE_ADS_CLIENT_SECRET")
         self._credentials = None
 
+        # Detect mock mode based on credentials
+        self.using_mock_data = self._detect_mock_mode()
+
+    def _detect_mock_mode(self) -> bool:
+        """Detect if we should use mock data based on credentials."""
+        mock_patterns = ['mock', 'test', 'demo', 'fake', 'placeholder']
+
+        # Check developer token
+        if self.developer_token:
+            token_lower = self.developer_token.lower()
+            if any(p in token_lower for p in mock_patterns):
+                return True
+
+        # Check credentials path
+        if self.credentials_path:
+            path_lower = self.credentials_path.lower()
+            if any(p in path_lower for p in mock_patterns):
+                return True
+            # Check if file doesn't exist
+            if not os.path.exists(self.credentials_path):
+                return True
+
+        # If no credentials are configured at all, use mock mode
+        if not self.developer_token and not self.credentials_path:
+            return True
+
+        return False
+
     @property
     def base_url(self) -> str:
         return f"https://googleads.googleapis.com/{API_VERSION}"

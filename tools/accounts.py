@@ -7,6 +7,7 @@ Pure functions for Google Ads account operations.
 from typing import Dict, List, Any
 
 from .client import GoogleAdsClient, format_customer_id
+from .mock_data import MOCK_ACCOUNTS, MOCK_ACCOUNT_INFO
 
 
 async def list_accounts(client: GoogleAdsClient) -> List[str]:
@@ -19,6 +20,9 @@ async def list_accounts(client: GoogleAdsClient) -> List[str]:
     Returns:
         List of customer IDs
     """
+    if client.using_mock_data:
+        return MOCK_ACCOUNTS
+
     result = client.get("customers:listAccessibleCustomers")
 
     if not result.get('resourceNames'):
@@ -46,6 +50,9 @@ async def get_account_currency(
     Returns:
         Currency code (e.g., 'USD', 'EUR')
     """
+    if client.using_mock_data:
+        return MOCK_ACCOUNT_INFO['currency']
+
     query = """
         SELECT
             customer.id,
@@ -76,6 +83,9 @@ async def get_account_info(
     Returns:
         Account details including name, currency, timezone, etc.
     """
+    if client.using_mock_data:
+        return {**MOCK_ACCOUNT_INFO, 'id': format_customer_id(customer_id)}
+
     query = """
         SELECT
             customer.id,
@@ -120,6 +130,7 @@ async def health_check(client: GoogleAdsClient) -> Dict[str, Any]:
             'status': 'healthy',
             'accounts_accessible': len(accounts),
             'account_ids': accounts[:5],  # Limit to first 5
+            'using_mock_data': client.using_mock_data,
         }
     except Exception as e:
         return {

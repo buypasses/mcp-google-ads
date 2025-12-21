@@ -7,6 +7,7 @@ Pure functions for Google Ads reporting and analytics.
 from typing import Dict, List, Any
 
 from .client import GoogleAdsClient
+from .mock_data import MOCK_KEYWORDS, MOCK_SEARCH_TERMS, MOCK_BUDGETS, MOCK_CONVERSIONS
 
 
 async def get_keyword_performance(
@@ -27,6 +28,27 @@ async def get_keyword_performance(
     Returns:
         List of keyword performance data
     """
+    if client.using_mock_data:
+        keywords = []
+        for row in MOCK_KEYWORDS[:limit]:
+            keyword = row.get('adGroupCriterion', {}).get('keyword', {})
+            campaign = row.get('campaign', {})
+            ad_group = row.get('adGroup', {})
+            metrics = row.get('metrics', {})
+            keywords.append({
+                'keyword': keyword.get('text'),
+                'match_type': keyword.get('matchType'),
+                'campaign_name': campaign.get('name'),
+                'ad_group_name': ad_group.get('name'),
+                'impressions': int(metrics.get('impressions', 0)),
+                'clicks': int(metrics.get('clicks', 0)),
+                'cost_micros': int(metrics.get('costMicros', 0)),
+                'conversions': float(metrics.get('conversions', 0)),
+                'ctr': float(metrics.get('ctr', 0)),
+                'average_cpc': int(metrics.get('averageCpc', 0)),
+            })
+        return keywords
+
     query = f"""
         SELECT
             keyword_view.resource_name,
@@ -89,6 +111,25 @@ async def get_search_terms_report(
     Returns:
         List of search term data
     """
+    if client.using_mock_data:
+        search_terms = []
+        for row in MOCK_SEARCH_TERMS[:limit]:
+            stv = row.get('searchTermView', {})
+            campaign = row.get('campaign', {})
+            ad_group = row.get('adGroup', {})
+            metrics = row.get('metrics', {})
+            search_terms.append({
+                'search_term': stv.get('searchTerm'),
+                'status': stv.get('status'),
+                'campaign_name': campaign.get('name'),
+                'ad_group_name': ad_group.get('name'),
+                'impressions': int(metrics.get('impressions', 0)),
+                'clicks': int(metrics.get('clicks', 0)),
+                'cost_micros': int(metrics.get('costMicros', 0)),
+                'conversions': float(metrics.get('conversions', 0)),
+            })
+        return search_terms
+
     query = f"""
         SELECT
             search_term_view.search_term,
@@ -142,6 +183,22 @@ async def get_budget_report(
     Returns:
         List of budget data
     """
+    if client.using_mock_data:
+        budgets = []
+        for row in MOCK_BUDGETS:
+            campaign = row.get('campaign', {})
+            budget = row.get('campaignBudget', {})
+            budgets.append({
+                'campaign_id': campaign.get('id'),
+                'campaign_name': campaign.get('name'),
+                'campaign_status': campaign.get('status'),
+                'daily_budget_micros': int(budget.get('amountMicros', 0)),
+                'total_budget_micros': budget.get('totalAmountMicros'),
+                'budget_status': budget.get('status'),
+                'delivery_method': budget.get('deliveryMethod'),
+            })
+        return budgets
+
     query = """
         SELECT
             campaign.id,
@@ -195,6 +252,22 @@ async def get_conversion_report(
     Returns:
         List of conversion data by campaign
     """
+    if client.using_mock_data:
+        conversions = []
+        for row in MOCK_CONVERSIONS[:limit]:
+            campaign = row.get('campaign', {})
+            metrics = row.get('metrics', {})
+            conversions.append({
+                'campaign_id': campaign.get('id'),
+                'campaign_name': campaign.get('name'),
+                'conversions': float(metrics.get('conversions', 0)),
+                'conversions_value': float(metrics.get('conversionsValue', 0)),
+                'cost_micros': int(metrics.get('costMicros', 0)),
+                'cost_per_conversion': float(metrics.get('costPerConversion', 0)),
+                'conversion_rate': float(metrics.get('conversionsFromInteractionsRate', 0)),
+            })
+        return conversions
+
     query = f"""
         SELECT
             campaign.id,

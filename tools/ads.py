@@ -7,6 +7,7 @@ Pure functions for Google Ads ad and ad group operations.
 from typing import Dict, List, Any
 
 from .client import GoogleAdsClient
+from .mock_data import MOCK_ADS, MOCK_AD_GROUPS
 
 
 async def get_ad_performance(
@@ -27,6 +28,27 @@ async def get_ad_performance(
     Returns:
         List of ad performance data
     """
+    if client.using_mock_data:
+        ads = []
+        for row in MOCK_ADS[:limit]:
+            ad = row.get('adGroupAd', {}).get('ad', {})
+            ad_status = row.get('adGroupAd', {}).get('status')
+            campaign = row.get('campaign', {})
+            ad_group = row.get('adGroup', {})
+            metrics = row.get('metrics', {})
+            ads.append({
+                'id': ad.get('id'),
+                'name': ad.get('name'),
+                'status': ad_status,
+                'campaign_name': campaign.get('name'),
+                'ad_group_name': ad_group.get('name'),
+                'impressions': int(metrics.get('impressions', 0)),
+                'clicks': int(metrics.get('clicks', 0)),
+                'cost_micros': int(metrics.get('costMicros', 0)),
+                'conversions': float(metrics.get('conversions', 0)),
+            })
+        return ads
+
     query = f"""
         SELECT
             ad_group_ad.ad.id,
@@ -85,6 +107,29 @@ async def get_ad_creatives(
     Returns:
         List of ad creative data
     """
+    if client.using_mock_data:
+        creatives = []
+        for row in MOCK_ADS[:limit]:
+            ad = row.get('adGroupAd', {}).get('ad', {})
+            ad_status = row.get('adGroupAd', {}).get('status')
+            campaign = row.get('campaign', {})
+            ad_group = row.get('adGroup', {})
+            rsa = ad.get('responsiveSearchAd', {})
+            headlines = [h.get('text', '') for h in rsa.get('headlines', [])]
+            descriptions = [d.get('text', '') for d in rsa.get('descriptions', [])]
+            creatives.append({
+                'id': ad.get('id'),
+                'name': ad.get('name'),
+                'type': 'RESPONSIVE_SEARCH_AD',
+                'status': ad_status,
+                'campaign_name': campaign.get('name'),
+                'ad_group_name': ad_group.get('name'),
+                'final_urls': [],
+                'headlines': headlines,
+                'descriptions': descriptions,
+            })
+        return creatives
+
     query = f"""
         SELECT
             ad_group_ad.ad.id,
@@ -153,6 +198,23 @@ async def list_ad_groups(
     Returns:
         List of ad group data
     """
+    if client.using_mock_data:
+        ad_groups = []
+        for row in MOCK_AD_GROUPS[:limit]:
+            ad_group = row.get('adGroup', {})
+            campaign = row.get('campaign', {})
+            if campaign_id and campaign.get('id') != campaign_id:
+                continue
+            ad_groups.append({
+                'id': ad_group.get('id'),
+                'name': ad_group.get('name'),
+                'status': ad_group.get('status'),
+                'type': ad_group.get('type'),
+                'campaign_id': campaign.get('id'),
+                'campaign_name': campaign.get('name'),
+            })
+        return ad_groups
+
     where_clause = ""
     if campaign_id:
         where_clause = f"WHERE campaign.id = {campaign_id}"

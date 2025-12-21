@@ -7,6 +7,7 @@ Pure functions for Google Ads campaign operations.
 from typing import Dict, List, Any, Optional
 
 from .client import GoogleAdsClient, format_customer_id
+from .mock_data import MOCK_CAMPAIGNS
 
 
 async def list_campaigns(
@@ -27,6 +28,21 @@ async def list_campaigns(
     Returns:
         List of campaign data
     """
+    if client.using_mock_data:
+        campaigns = []
+        for row in MOCK_CAMPAIGNS[:limit]:
+            campaign = row.get('campaign', {})
+            if status_filter and campaign.get('status') != status_filter:
+                continue
+            campaigns.append({
+                'id': campaign.get('id'),
+                'name': campaign.get('name'),
+                'status': campaign.get('status'),
+                'channel_type': campaign.get('advertisingChannelType'),
+                'bidding_strategy': campaign.get('biddingStrategyType'),
+            })
+        return campaigns
+
     where_clause = ""
     if status_filter:
         where_clause = f"WHERE campaign.status = '{status_filter}'"
@@ -80,6 +96,19 @@ async def get_campaign(
     Returns:
         Campaign details
     """
+    if client.using_mock_data:
+        for row in MOCK_CAMPAIGNS:
+            campaign = row.get('campaign', {})
+            if campaign.get('id') == campaign_id:
+                return {
+                    'id': campaign.get('id'),
+                    'name': campaign.get('name'),
+                    'status': campaign.get('status'),
+                    'channel_type': campaign.get('advertisingChannelType'),
+                    'bidding_strategy': campaign.get('biddingStrategyType'),
+                }
+        raise Exception(f"Campaign not found: {campaign_id} (mock mode)")
+
     query = f"""
         SELECT
             campaign.id,
@@ -130,6 +159,23 @@ async def get_campaign_performance(
     Returns:
         List of campaign performance data
     """
+    if client.using_mock_data:
+        campaigns = []
+        for row in MOCK_CAMPAIGNS[:limit]:
+            campaign = row.get('campaign', {})
+            metrics = row.get('metrics', {})
+            campaigns.append({
+                'id': campaign.get('id'),
+                'name': campaign.get('name'),
+                'status': campaign.get('status'),
+                'impressions': int(metrics.get('impressions', 0)),
+                'clicks': int(metrics.get('clicks', 0)),
+                'cost_micros': int(metrics.get('costMicros', 0)),
+                'conversions': float(metrics.get('conversions', 0)),
+                'average_cpc': int(metrics.get('averageCpc', 0)),
+            })
+        return campaigns
+
     query = f"""
         SELECT
             campaign.id,
