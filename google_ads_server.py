@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Union
 from pydantic import Field
+import base64
 import os
 import json
 import requests
@@ -1554,8 +1555,6 @@ async def upload_image_asset(
     Returns:
         Status message with the new asset ID if successful
     """
-    import base64
-
     try:
         creds = get_credentials()
         headers = get_headers(creds)
