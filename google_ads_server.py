@@ -1792,6 +1792,268 @@ async def get_linked_assets(
         return f"Error getting linked assets: {str(e)}"
 
 
+# Known violating patterns (text overlays, logos, app screenshots)
+VIOLATING_PATTERNS = [
+    "buypassf23",
+    "Buypass_update",
+    "hassle_free",
+    "watch_sales",
+    "vending_machine",
+    "qr_",
+    "IMG_969",
+    "IMG_97",
+    "Website_image",
+    "Enhanced_website",
+    "Free_stock_image",
+]
+
+# Assets with these prefixes are compliant
+COMPLIANT_PREFIXES = ["BuyPass -"]
+
+
+def is_violating_asset(asset_name: str) -> bool:
+    """Check if asset name matches known violating patterns."""
+    # Check if it's compliant first
+    for prefix in COMPLIANT_PREFIXES:
+        if asset_name.startswith(prefix):
+            return False
+
+    # Check against violating patterns
+    name_lower = asset_name.lower()
+    for pattern in VIOLATING_PATTERNS:
+        if pattern.lower() in name_lower:
+            return True
+    return False
+
+
+@mcp.tool()
+async def get_violating_assets(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    include_unlinked: bool = Field(default=False, description="Include assets not linked to any ad group")
+) -> str:
+    """
+    Identify assets that violate Google Ads policies.
+
+    Checks assets against known violating patterns:
+    - Logo-only images (buypassf23, Buypass_update)
+    - Text overlay images (hassle_free, watch_sales, qr_)
+    - App screenshots (IMG_969, IMG_97)
+    - Other violations (Enhanced_website, Free_stock_image)
+
+    Compliant assets start with "BuyPass -" prefix.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        include_unlinked: If True, also check assets not linked to ad groups
+
+    Returns:
+        Report of violating assets, separated by in-use vs not-in-use
+    """
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+        formatted_customer_id = format_customer_id(customer_id)
+
+        # Fetch all image assets
+        all_assets_query = """
+            SELECT asset.id, asset.name, asset.type
+            FROM asset
+            WHERE asset.type = 'IMAGE'
+        """
+
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+        response = requests.post(url, headers=headers, json={"query": all_assets_query})
+
+        if response.status_code != 200:
+            return f"Error fetching assets: {response.text}"
+
+        all_assets = response.json().get('results', [])
+
+        # Fetch linked assets (ENABLED only)
+        linked_query = """
+            SELECT asset.id, asset.name, ad_group.name, campaign.name
+            FROM ad_group_asset
+            WHERE asset.type = 'IMAGE' AND ad_group_asset.status = 'ENABLED'
+        """
+
+        response = requests.post(url, headers=headers, json={"query": linked_query})
+        linked_results = response.json().get('results', []) if response.status_code == 200 else []
+        linked_ids = {r.get('asset', {}).get('id') for r in linked_results}
+
+        # Categorize violating assets
+        in_use = []
+        not_in_use = []
+
+        for item in all_assets:
+            asset = item.get('asset', {})
+            asset_id = asset.get('id')
+            asset_name = asset.get('name', '')
+
+            if is_violating_asset(asset_name):
+                asset_info = {
+                    'id': asset_id,
+                    'name': asset_name,
+                }
+                if asset_id in linked_ids:
+                    # Find ad group info
+                    for linked in linked_results:
+                        if linked.get('asset', {}).get('id') == asset_id:
+                            asset_info['ad_group'] = linked.get('adGroup', {}).get('name')
+                            asset_info['campaign'] = linked.get('campaign', {}).get('name')
+                            break
+                    in_use.append(asset_info)
+                else:
+                    not_in_use.append(asset_info)
+
+        # Build output
+        output = [f"Violating Assets Report for Customer {formatted_customer_id}"]
+        output.append("=" * 80)
+        output.append(f"\nIN USE ({len(in_use)} assets - linked to ad groups):")
+
+        if in_use:
+            for a in in_use[:25]:
+                output.append(f"  [{a['id']}] {a['name'][:50]}")
+                if a.get('ad_group'):
+                    output.append(f"      -> {a.get('campaign', 'N/A')} / {a.get('ad_group', 'N/A')}")
+            if len(in_use) > 25:
+                output.append(f"  ... and {len(in_use) - 25} more")
+        else:
+            output.append("  None - all violating assets have been unlinked!")
+
+        if include_unlinked:
+            output.append(f"\nNOT IN USE ({len(not_in_use)} assets - in Asset Library only):")
+            for a in not_in_use[:10]:
+                output.append(f"  [{a['id']}] {a['name'][:50]}")
+            if len(not_in_use) > 10:
+                output.append(f"  ... and {len(not_in_use) - 10} more")
+
+        output.append(f"\n" + "=" * 80)
+        output.append(f"Summary: {len(in_use)} violating in use, {len(not_in_use)} not in use")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error checking violating assets: {str(e)}"
+
+
+@mcp.tool()
+async def batch_unlink_assets(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    pattern: str = Field(default=None, description="Name pattern to match (case-insensitive). E.g., 'IMG_97'"),
+    asset_ids: str = Field(default=None, description="Comma-separated list of asset IDs to unlink"),
+    dry_run: bool = Field(default=True, description="If True, only show what would be unlinked without making changes")
+) -> str:
+    """
+    Unlink multiple assets from ad groups by pattern or IDs.
+
+    Use this to batch-remove violating or unwanted assets from campaigns.
+    By default runs in dry-run mode - set dry_run=False to actually unlink.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        pattern: Name pattern to match (e.g., 'IMG_97' matches 'IMG_9741_1.jpg')
+        asset_ids: Comma-separated asset IDs to unlink (e.g., '123,456,789')
+        dry_run: If True, only preview changes without unlinking
+
+    Returns:
+        Report of unlinked assets or dry-run preview
+    """
+    if not pattern and not asset_ids:
+        return "Error: Must provide either 'pattern' or 'asset_ids' parameter"
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+        formatted_customer_id = format_customer_id(customer_id)
+
+        # Fetch linked assets (ENABLED only)
+        query = """
+            SELECT
+                ad_group_asset.resource_name,
+                asset.id,
+                asset.name,
+                ad_group.id,
+                ad_group.name
+            FROM ad_group_asset
+            WHERE asset.type = 'IMAGE' AND ad_group_asset.status = 'ENABLED'
+        """
+
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+        response = requests.post(url, headers=headers, json={"query": query})
+
+        if response.status_code != 200:
+            return f"Error fetching linked assets: {response.text}"
+
+        results = response.json().get('results', [])
+
+        # Filter by pattern or IDs
+        to_unlink = []
+        target_ids = set()
+
+        if asset_ids:
+            target_ids = {id.strip() for id in asset_ids.split(',')}
+
+        for item in results:
+            asset = item.get('asset', {})
+            asset_id = str(asset.get('id', ''))
+            asset_name = asset.get('name', '')
+
+            match = False
+            if pattern and pattern.lower() in asset_name.lower():
+                match = True
+            if asset_id in target_ids:
+                match = True
+
+            if match:
+                to_unlink.append({
+                    'resource_name': item.get('adGroupAsset', {}).get('resourceName'),
+                    'asset_id': asset_id,
+                    'asset_name': asset_name,
+                    'ad_group_id': item.get('adGroup', {}).get('id'),
+                    'ad_group_name': item.get('adGroup', {}).get('name'),
+                })
+
+        if not to_unlink:
+            return f"No matching assets found to unlink (pattern='{pattern}', ids='{asset_ids}')"
+
+        output = [f"Batch Unlink {'[DRY RUN]' if dry_run else '[EXECUTING]'}"]
+        output.append("=" * 80)
+        output.append(f"Found {len(to_unlink)} asset link(s) to remove:\n")
+
+        if dry_run:
+            for item in to_unlink:
+                output.append(f"  - {item['asset_name'][:40]} from {item['ad_group_name']}")
+            output.append(f"\nRun with dry_run=False to unlink these assets.")
+            return "\n".join(output)
+
+        # Actually unlink
+        success = 0
+        failed = 0
+        mutate_url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/adGroupAssets:mutate"
+
+        for item in to_unlink:
+            payload = {
+                "operations": [{"remove": item['resource_name']}]
+            }
+            resp = requests.post(mutate_url, headers=headers, json=payload)
+
+            if resp.status_code == 200:
+                output.append(f"  OK: Unlinked {item['asset_name'][:40]}")
+                success += 1
+            else:
+                error = resp.json().get('error', {}).get('message', resp.text[:100])
+                output.append(f"  FAILED: {item['asset_name'][:40]} - {error}")
+                failed += 1
+
+        output.append(f"\n" + "=" * 80)
+        output.append(f"Complete: {success} unlinked, {failed} failed")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error in batch unlink: {str(e)}"
+
+
 if __name__ == "__main__":
     # Start the MCP server on stdio transport
     mcp.run(transport="stdio")
