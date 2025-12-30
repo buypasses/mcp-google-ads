@@ -1442,35 +1442,423 @@ async def analyze_image_assets(
         return f"Error analyzing image assets: {str(e)}"
 
 @mcp.tool()
+async def list_ad_groups(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes). Example: '9873186703'"),
+    campaign_id: str = Field(default=None, description="Optional: Filter by specific campaign ID"),
+    status_filter: str = Field(default=None, description="Optional: Filter by status ('ENABLED', 'PAUSED', 'REMOVED')")
+) -> str:
+    """
+    List all ad groups in an account with their details and status.
+
+    This tool retrieves ad groups with their associated campaigns, status, and basic metrics.
+    Useful for understanding account structure and identifying ad groups to analyze.
+
+    RECOMMENDED WORKFLOW:
+    1. First run list_accounts() to get available account IDs
+    2. Then run this command to see all ad groups
+    3. Use the ad group IDs with other tools for deeper analysis
+
+    Args:
+        customer_id: The Google Ads customer ID as a string (10 digits, no dashes)
+        campaign_id: Optional campaign ID to filter ad groups by specific campaign
+        status_filter: Optional status filter ('ENABLED', 'PAUSED', 'REMOVED')
+
+    Returns:
+        Formatted list of ad groups with their details
+
+    Example:
+        customer_id: "1234567890"
+        campaign_id: "12345678"
+        status_filter: "ENABLED"
+    """
+    # Build WHERE clause based on filters
+    where_conditions = []
+    if campaign_id:
+        where_conditions.append(f"campaign.id = {campaign_id}")
+    if status_filter:
+        where_conditions.append(f"ad_group.status = '{status_filter.upper()}'")
+
+    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+
+    query = f"""
+        SELECT
+            ad_group.id,
+            ad_group.name,
+            ad_group.status,
+            ad_group.type,
+            campaign.id,
+            campaign.name,
+            campaign.status
+        FROM ad_group
+        WHERE {where_clause}
+        ORDER BY campaign.name, ad_group.name
+        LIMIT 100
+    """
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return f"Error listing ad groups: {response.text}"
+
+        results = response.json()
+        if not results.get('results'):
+            return "No ad groups found for this customer ID with the specified filters."
+
+        # Format the results
+        output_lines = [f"Ad Groups for Customer ID {formatted_customer_id}:"]
+        output_lines.append("=" * 100)
+
+        # Group by campaign
+        campaigns = {}
+        for result in results['results']:
+            campaign = result.get('campaign', {})
+            ad_group = result.get('adGroup', {})
+
+            campaign_id = campaign.get('id')
+            if campaign_id not in campaigns:
+                campaigns[campaign_id] = {
+                    'name': campaign.get('name', 'Unknown'),
+                    'status': campaign.get('status', 'Unknown'),
+                    'ad_groups': []
+                }
+
+            campaigns[campaign_id]['ad_groups'].append({
+                'id': ad_group.get('id', 'N/A'),
+                'name': ad_group.get('name', 'N/A'),
+                'status': ad_group.get('status', 'N/A'),
+                'type': ad_group.get('type', 'N/A')
+            })
+
+        # Format output
+        for campaign_id, campaign_data in campaigns.items():
+            output_lines.append(f"\nCampaign: {campaign_data['name']} (ID: {campaign_id}) - {campaign_data['status']}")
+            output_lines.append("-" * 80)
+            output_lines.append(f"{'Ad Group ID':<20} | {'Name':<35} | {'Status':<10} | {'Type':<15}")
+            output_lines.append("-" * 80)
+
+            for ag in campaign_data['ad_groups']:
+                output_lines.append(f"{str(ag['id']):<20} | {ag['name'][:35]:<35} | {ag['status']:<10} | {ag['type']:<15}")
+
+        output_lines.append("\n" + "=" * 100)
+        output_lines.append(f"Total: {sum(len(c['ad_groups']) for c in campaigns.values())} ad groups across {len(campaigns)} campaigns")
+
+        return "\n".join(output_lines)
+
+    except Exception as e:
+        return f"Error listing ad groups: {str(e)}"
+
+
+@mcp.tool()
+async def get_violating_assets(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes). Example: '9873186703'"),
+    asset_type: str = Field(default=None, description="Optional: Filter by asset type ('IMAGE', 'TEXT', 'VIDEO', etc.)")
+) -> str:
+    """
+    Get assets with policy violations or disapprovals.
+
+    This tool identifies assets that have been disapproved or have policy violations,
+    helping you understand what needs to be fixed for your ads to run properly.
+
+    RECOMMENDED WORKFLOW:
+    1. First run list_accounts() to get available account IDs
+    2. Run this command to find assets with policy issues
+    3. Review the violation reasons and fix the assets
+
+    Args:
+        customer_id: The Google Ads customer ID as a string (10 digits, no dashes)
+        asset_type: Optional filter for asset type ('IMAGE', 'TEXT', 'VIDEO', etc.)
+
+    Returns:
+        Formatted list of assets with policy violations and their details
+
+    Example:
+        customer_id: "1234567890"
+        asset_type: "IMAGE"
+    """
+    # Build WHERE clause
+    where_conditions = ["asset.policy_summary.approval_status != 'APPROVED'"]
+    if asset_type:
+        where_conditions.append(f"asset.type = '{asset_type.upper()}'")
+
+    where_clause = " AND ".join(where_conditions)
+
+    query = f"""
+        SELECT
+            asset.id,
+            asset.name,
+            asset.type,
+            asset.policy_summary.approval_status,
+            asset.policy_summary.review_status
+        FROM asset
+        WHERE {where_clause}
+        LIMIT 100
+    """
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return f"Error retrieving violating assets: {response.text}"
+
+        results = response.json()
+        if not results.get('results'):
+            return "No assets with policy violations found. All assets appear to be approved!"
+
+        # Format the results
+        output_lines = [f"Assets with Policy Violations for Customer ID {formatted_customer_id}:"]
+        output_lines.append("=" * 100)
+        output_lines.append(f"\n{'Asset ID':<15} | {'Name':<30} | {'Type':<10} | {'Approval Status':<20} | {'Review Status':<15}")
+        output_lines.append("-" * 100)
+
+        violation_count = 0
+        for result in results['results']:
+            asset = result.get('asset', {})
+            policy_summary = asset.get('policySummary', {})
+
+            asset_id = asset.get('id', 'N/A')
+            name = asset.get('name', 'Unnamed')[:30]
+            asset_type = asset.get('type', 'N/A')
+            approval_status = policy_summary.get('approvalStatus', 'N/A')
+            review_status = policy_summary.get('reviewStatus', 'N/A')
+
+            output_lines.append(f"{str(asset_id):<15} | {name:<30} | {asset_type:<10} | {approval_status:<20} | {review_status:<15}")
+            violation_count += 1
+
+        output_lines.append("\n" + "=" * 100)
+        output_lines.append(f"Total: {violation_count} assets with policy issues")
+        output_lines.append("\nNote: Review these assets and update them to comply with Google Ads policies.")
+
+        return "\n".join(output_lines)
+
+    except Exception as e:
+        return f"Error retrieving violating assets: {str(e)}"
+
+
+@mcp.tool()
+async def get_linked_assets(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes). Example: '9873186703'"),
+    asset_type: str = Field(default=None, description="Optional: Filter by asset type ('IMAGE', 'TEXT', 'VIDEO', etc.)"),
+    link_level: str = Field(default="all", description="Asset link level: 'campaign', 'ad_group', or 'all'")
+) -> str:
+    """
+    Get assets linked to campaigns and ad groups with their link details.
+
+    This tool shows how assets are connected to campaigns and ad groups,
+    including the field type (e.g., headline, description, image) and status.
+
+    RECOMMENDED WORKFLOW:
+    1. First run list_accounts() to get available account IDs
+    2. Run this command to see asset linkages
+    3. Use this information for creative analysis and optimization
+
+    Args:
+        customer_id: The Google Ads customer ID as a string (10 digits, no dashes)
+        asset_type: Optional filter for asset type ('IMAGE', 'TEXT', 'VIDEO', etc.)
+        link_level: Which link level to query: 'campaign', 'ad_group', or 'all' (default: 'all')
+
+    Returns:
+        Formatted list of linked assets with their connection details
+
+    Example:
+        customer_id: "1234567890"
+        asset_type: "IMAGE"
+        link_level: "campaign"
+    """
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+
+        all_results = []
+
+        # Query campaign-level assets
+        if link_level in ["campaign", "all"]:
+            where_conditions = []
+            if asset_type:
+                where_conditions.append(f"asset.type = '{asset_type.upper()}'")
+            where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+
+            campaign_query = f"""
+                SELECT
+                    asset.id,
+                    asset.name,
+                    asset.type,
+                    campaign.id,
+                    campaign.name,
+                    campaign_asset.field_type,
+                    campaign_asset.status
+                FROM campaign_asset
+                WHERE {where_clause}
+                LIMIT 200
+            """
+
+            payload = {"query": campaign_query}
+            response = requests.post(url, headers=headers, json=payload)
+
+            if response.status_code == 200:
+                results = response.json()
+                for result in results.get('results', []):
+                    asset = result.get('asset', {})
+                    campaign = result.get('campaign', {})
+                    campaign_asset = result.get('campaignAsset', {})
+
+                    all_results.append({
+                        'level': 'Campaign',
+                        'asset_id': asset.get('id', 'N/A'),
+                        'asset_name': asset.get('name', 'Unnamed'),
+                        'asset_type': asset.get('type', 'N/A'),
+                        'parent_id': campaign.get('id', 'N/A'),
+                        'parent_name': campaign.get('name', 'N/A'),
+                        'field_type': campaign_asset.get('fieldType', 'N/A'),
+                        'status': campaign_asset.get('status', 'N/A')
+                    })
+
+        # Query ad group-level assets
+        if link_level in ["ad_group", "all"]:
+            where_conditions = []
+            if asset_type:
+                where_conditions.append(f"asset.type = '{asset_type.upper()}'")
+            where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+
+            ad_group_query = f"""
+                SELECT
+                    asset.id,
+                    asset.name,
+                    asset.type,
+                    ad_group.id,
+                    ad_group.name,
+                    ad_group_asset.field_type,
+                    ad_group_asset.status
+                FROM ad_group_asset
+                WHERE {where_clause}
+                LIMIT 200
+            """
+
+            payload = {"query": ad_group_query}
+            response = requests.post(url, headers=headers, json=payload)
+
+            if response.status_code == 200:
+                results = response.json()
+                for result in results.get('results', []):
+                    asset = result.get('asset', {})
+                    ad_group = result.get('adGroup', {})
+                    ad_group_asset = result.get('adGroupAsset', {})
+
+                    all_results.append({
+                        'level': 'Ad Group',
+                        'asset_id': asset.get('id', 'N/A'),
+                        'asset_name': asset.get('name', 'Unnamed'),
+                        'asset_type': asset.get('type', 'N/A'),
+                        'parent_id': ad_group.get('id', 'N/A'),
+                        'parent_name': ad_group.get('name', 'N/A'),
+                        'field_type': ad_group_asset.get('fieldType', 'N/A'),
+                        'status': ad_group_asset.get('status', 'N/A')
+                    })
+
+        if not all_results:
+            return f"No linked assets found for customer ID {formatted_customer_id} with the specified filters."
+
+        # Format the results
+        output_lines = [f"Linked Assets for Customer ID {formatted_customer_id}:"]
+        output_lines.append("=" * 120)
+        output_lines.append(f"\n{'Level':<10} | {'Asset ID':<15} | {'Asset Type':<10} | {'Field Type':<20} | {'Status':<10} | {'Parent Name':<30}")
+        output_lines.append("-" * 120)
+
+        # Group by level
+        campaign_assets = [r for r in all_results if r['level'] == 'Campaign']
+        ad_group_assets = [r for r in all_results if r['level'] == 'Ad Group']
+
+        if campaign_assets:
+            output_lines.append("\n--- Campaign-Level Assets ---")
+            for r in campaign_assets:
+                output_lines.append(
+                    f"{r['level']:<10} | {str(r['asset_id']):<15} | {r['asset_type']:<10} | "
+                    f"{r['field_type']:<20} | {r['status']:<10} | {r['parent_name'][:30]:<30}"
+                )
+
+        if ad_group_assets:
+            output_lines.append("\n--- Ad Group-Level Assets ---")
+            for r in ad_group_assets:
+                output_lines.append(
+                    f"{r['level']:<10} | {str(r['asset_id']):<15} | {r['asset_type']:<10} | "
+                    f"{r['field_type']:<20} | {r['status']:<10} | {r['parent_name'][:30]:<30}"
+                )
+
+        output_lines.append("\n" + "=" * 120)
+        output_lines.append(f"Total: {len(campaign_assets)} campaign-level assets, {len(ad_group_assets)} ad group-level assets")
+
+        return "\n".join(output_lines)
+
+    except Exception as e:
+        return f"Error retrieving linked assets: {str(e)}"
+
+
+@mcp.tool()
 async def list_resources(
     customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes). Example: '9873186703'")
 ) -> str:
     """
     List valid resources that can be used in GAQL FROM clauses.
-    
+
     Args:
         customer_id: The Google Ads customer ID as a string
-        
+
     Returns:
         Formatted list of valid resources
     """
-    # Example query that lists some common resources
-    # This might need to be adjusted based on what's available in your API version
-    query = """
-        SELECT
-            google_ads_field.name,
-            google_ads_field.category,
-            google_ads_field.data_type
-        FROM
-            google_ads_field
-        WHERE
-            google_ads_field.category = 'RESOURCE'
-        ORDER BY
-            google_ads_field.name
-    """
-    
-    # Use your existing run_gaql function to execute this query
-    return await run_gaql(customer_id, query)
+    # The google_ads_field resource is not directly queryable via GAQL
+    # Instead, return a static list of common resources
+    common_resources = [
+        "campaign - Campaign-level data and settings",
+        "ad_group - Ad group data within campaigns",
+        "ad_group_ad - Ads within ad groups",
+        "ad_group_criterion - Targeting criteria for ad groups",
+        "asset - Creative assets (images, text, videos)",
+        "campaign_asset - Assets linked at campaign level",
+        "ad_group_asset - Assets linked at ad group level",
+        "keyword_view - Keyword performance data",
+        "campaign_budget - Budget information",
+        "bidding_strategy - Bidding strategy settings",
+        "customer - Account-level information",
+        "geographic_view - Geographic performance data",
+        "gender_view - Gender demographic data",
+        "age_range_view - Age demographic data",
+        "user_list - Audience lists",
+        "conversion_action - Conversion tracking settings",
+        "change_status - Account change history",
+        "campaign_criterion - Campaign-level targeting",
+    ]
+
+    output_lines = [f"Common GAQL Resources for Google Ads API {API_VERSION}:"]
+    output_lines.append("=" * 60)
+    output_lines.append("")
+
+    for resource in common_resources:
+        output_lines.append(f"  • {resource}")
+
+    output_lines.append("")
+    output_lines.append("=" * 60)
+    output_lines.append("Use these in GAQL queries like: SELECT ... FROM <resource>")
+    output_lines.append("For full documentation: https://developers.google.com/google-ads/api/fields/v19/overview")
+
+    return "\n".join(output_lines)
 
 @mcp.tool()
 async def list_ad_groups(
