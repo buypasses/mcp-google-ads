@@ -1471,6 +1471,328 @@ async def list_resources(
     # Use your existing run_gaql function to execute this query
     return await run_gaql(customer_id, query)
 
+@mcp.tool()
+async def list_ad_groups(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes). Example: '9873186703'")
+) -> str:
+    """
+    List all ad groups in the account.
+
+    Use this to find ad group IDs for linking/unlinking assets.
+
+    Args:
+        customer_id: The Google Ads customer ID as a string (10 digits, no dashes)
+
+    Returns:
+        Formatted list of ad groups with their IDs
+    """
+    query = """
+        SELECT
+            ad_group.id,
+            ad_group.name,
+            ad_group.status,
+            campaign.id,
+            campaign.name
+        FROM ad_group
+        WHERE ad_group.status != 'REMOVED'
+        ORDER BY campaign.name, ad_group.name
+        LIMIT 100
+    """
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return f"Error listing ad groups: {response.text}"
+
+        results = response.json()
+        if not results.get('results'):
+            return "No ad groups found."
+
+        output_lines = [f"Ad Groups for Customer ID {formatted_customer_id}:"]
+        output_lines.append("=" * 80)
+
+        for result in results['results']:
+            ad_group = result.get('adGroup', {})
+            campaign = result.get('campaign', {})
+
+            output_lines.append(f"\nAd Group ID: {ad_group.get('id', 'N/A')}")
+            output_lines.append(f"  Name: {ad_group.get('name', 'N/A')}")
+            output_lines.append(f"  Status: {ad_group.get('status', 'N/A')}")
+            output_lines.append(f"  Campaign: {campaign.get('name', 'N/A')} (ID: {campaign.get('id', 'N/A')})")
+            output_lines.append("-" * 40)
+
+        return "\n".join(output_lines)
+
+    except Exception as e:
+        return f"Error listing ad groups: {str(e)}"
+
+
+@mcp.tool()
+async def upload_image_asset(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    image_url: str = Field(description="URL of the image to upload"),
+    asset_name: str = Field(description="Name for the new asset")
+) -> str:
+    """
+    Upload an image asset to Google Ads from a URL.
+
+    The image will be downloaded and uploaded to the Google Ads Asset Library.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        image_url: URL of the image to upload
+        asset_name: Name for the new asset in Google Ads
+
+    Returns:
+        Status message with the new asset ID if successful
+    """
+    import base64
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        # Download the image
+        logger.info(f"Downloading image from {image_url}")
+        image_response = requests.get(image_url, timeout=30)
+        if image_response.status_code != 200:
+            return f"Failed to download image: HTTP {image_response.status_code}"
+
+        image_data = image_response.content
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+        # Determine MIME type from content-type header or URL
+        content_type = image_response.headers.get('content-type', '').lower()
+        if 'png' in content_type or image_url.lower().endswith('.png'):
+            mime_type = 'IMAGE_PNG'
+        elif 'gif' in content_type or image_url.lower().endswith('.gif'):
+            mime_type = 'IMAGE_GIF'
+        else:
+            mime_type = 'IMAGE_JPEG'
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/assets:mutate"
+
+        payload = {
+            "operations": [
+                {
+                    "create": {
+                        "name": asset_name,
+                        "type": "IMAGE",
+                        "imageAsset": {
+                            "data": image_base64,
+                            "mimeType": mime_type,
+                        },
+                    }
+                }
+            ],
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 200:
+            result = response.json()
+            resource_name = result.get("results", [{}])[0].get("resourceName", "")
+            asset_id = resource_name.split("/")[-1] if resource_name else "unknown"
+            return f"Successfully uploaded asset '{asset_name}' with ID: {asset_id}\nResource: {resource_name}"
+        else:
+            error = response.json()
+            error_msg = error.get("error", {}).get("message", response.text[:200])
+            return f"Failed to upload asset: {error_msg}"
+
+    except Exception as e:
+        return f"Error uploading image asset: {str(e)}"
+
+
+@mcp.tool()
+async def link_asset_to_ad_group(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    ad_group_id: str = Field(description="The ad group ID to link the asset to"),
+    asset_id: str = Field(description="The asset ID to link")
+) -> str:
+    """
+    Link an existing asset to an ad group.
+
+    This makes the asset available for use in ads within the specified ad group.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        ad_group_id: The ad group ID to link to
+        asset_id: The asset ID to link
+
+    Returns:
+        Status message indicating success or failure
+    """
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/adGroupAssets:mutate"
+
+        ad_group_resource = f"customers/{formatted_customer_id}/adGroups/{ad_group_id}"
+        asset_resource = f"customers/{formatted_customer_id}/assets/{asset_id}"
+
+        payload = {
+            "operations": [
+                {
+                    "create": {
+                        "adGroup": ad_group_resource,
+                        "asset": asset_resource,
+                        "fieldType": "AD_IMAGE",
+                    }
+                }
+            ],
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 200:
+            result = response.json()
+            resource_name = result.get("results", [{}])[0].get("resourceName", "")
+            return f"Successfully linked asset {asset_id} to ad group {ad_group_id}\nResource: {resource_name}"
+        else:
+            error = response.json()
+            error_msg = error.get("error", {}).get("message", response.text[:200])
+
+            if "ASSET_ALREADY_LINKED" in str(error) or "already" in error_msg.lower():
+                return f"Asset {asset_id} is already linked to ad group {ad_group_id}"
+
+            return f"Failed to link asset: {error_msg}"
+
+    except Exception as e:
+        return f"Error linking asset: {str(e)}"
+
+
+@mcp.tool()
+async def unlink_asset_from_ad_group(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    ad_group_id: str = Field(description="The ad group ID to unlink from"),
+    asset_id: str = Field(description="The asset ID to unlink")
+) -> str:
+    """
+    Unlink an asset from an ad group.
+
+    This removes the asset from the ad group but keeps it in the Asset Library.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        ad_group_id: The ad group ID to unlink from
+        asset_id: The asset ID to unlink
+
+    Returns:
+        Status message indicating success or failure
+    """
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/adGroupAssets:mutate"
+
+        # The resource name format for ad_group_asset
+        resource_name = f"customers/{formatted_customer_id}/adGroupAssets/{ad_group_id}~{asset_id}~AD_IMAGE"
+
+        payload = {
+            "operations": [
+                {
+                    "remove": resource_name
+                }
+            ],
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 200:
+            return f"Successfully unlinked asset {asset_id} from ad group {ad_group_id}"
+        else:
+            error = response.json()
+            error_msg = error.get("error", {}).get("message", response.text[:200])
+            return f"Failed to unlink asset: {error_msg}"
+
+    except Exception as e:
+        return f"Error unlinking asset: {str(e)}"
+
+
+@mcp.tool()
+async def get_linked_assets(
+    customer_id: str = Field(description="Google Ads customer ID (10 digits, no dashes)"),
+    ad_group_id: str = Field(default=None, description="Optional: filter by specific ad group ID")
+) -> str:
+    """
+    List all assets linked to ad groups.
+
+    Shows which assets are currently being used in campaigns.
+
+    Args:
+        customer_id: The Google Ads customer ID
+        ad_group_id: Optional ad group ID to filter by
+
+    Returns:
+        Formatted list of linked assets
+    """
+    where_clause = "asset.type = 'IMAGE'"
+    if ad_group_id:
+        where_clause += f" AND ad_group.id = {ad_group_id}"
+
+    query = f"""
+        SELECT
+            ad_group_asset.resource_name,
+            asset.id,
+            asset.name,
+            ad_group.id,
+            ad_group.name,
+            campaign.name
+        FROM ad_group_asset
+        WHERE {where_clause}
+        LIMIT 100
+    """
+
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+
+        formatted_customer_id = format_customer_id(customer_id)
+        url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
+
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return f"Error getting linked assets: {response.text}"
+
+        results = response.json()
+        if not results.get('results'):
+            return "No linked assets found."
+
+        output_lines = [f"Linked Assets for Customer ID {formatted_customer_id}:"]
+        output_lines.append("=" * 80)
+
+        for result in results['results']:
+            asset = result.get('asset', {})
+            ad_group = result.get('adGroup', {})
+            campaign = result.get('campaign', {})
+
+            output_lines.append(f"\nAsset ID: {asset.get('id', 'N/A')}")
+            output_lines.append(f"  Name: {asset.get('name', 'N/A')}")
+            output_lines.append(f"  Campaign: {campaign.get('name', 'N/A')}")
+            output_lines.append(f"  Ad Group: {ad_group.get('name', 'N/A')} (ID: {ad_group.get('id', 'N/A')})")
+            output_lines.append("-" * 40)
+
+        return "\n".join(output_lines)
+
+    except Exception as e:
+        return f"Error getting linked assets: {str(e)}"
+
+
 if __name__ == "__main__":
     # Start the MCP server on stdio transport
     mcp.run(transport="stdio")
