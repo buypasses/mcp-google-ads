@@ -1990,8 +1990,12 @@ async def batch_unlink_assets(
         to_unlink = []
         target_ids = set()
 
-        if asset_ids:
-            target_ids = {id.strip() for id in asset_ids.split(',')}
+        # Handle Field defaults when called directly (not via MCP)
+        actual_asset_ids = asset_ids if isinstance(asset_ids, str) else None
+        actual_pattern = pattern if isinstance(pattern, str) else None
+
+        if actual_asset_ids:
+            target_ids = {id.strip() for id in actual_asset_ids.split(',')}
 
         for item in results:
             asset = item.get('asset', {})
@@ -1999,7 +2003,7 @@ async def batch_unlink_assets(
             asset_name = asset.get('name', '')
 
             match = False
-            if pattern and pattern.lower() in asset_name.lower():
+            if actual_pattern and actual_pattern.lower() in asset_name.lower():
                 match = True
             if asset_id in target_ids:
                 match = True
@@ -2014,7 +2018,7 @@ async def batch_unlink_assets(
                 })
 
         if not to_unlink:
-            return f"No matching assets found to unlink (pattern='{pattern}', ids='{asset_ids}')"
+            return f"No matching assets found to unlink (pattern='{actual_pattern}', ids='{actual_asset_ids}')"
 
         output = [f"Batch Unlink {'[DRY RUN]' if dry_run else '[EXECUTING]'}"]
         output.append("=" * 80)
