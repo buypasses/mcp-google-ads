@@ -6,10 +6,13 @@ Functions for Google Ads asset operations.
 
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import List, Dict, Any, Optional
 from api_client import GoogleAdsClient
+
+logger = logging.getLogger(__name__)
 
 
 def get_image_assets(
@@ -173,8 +176,8 @@ def get_linked_assets(
                     'field_type': campaign_asset.get('fieldType'),
                     'status': campaign_asset.get('status')
                 })
-        except Exception:
-            pass  # Campaign assets query failed
+        except Exception as e:
+            logger.warning(f"Campaign assets query failed: {e}")
 
     # Ad group-level assets
     if link_level in ["ad_group", "all"]:
@@ -208,8 +211,8 @@ def get_linked_assets(
                     'field_type': ad_group_asset.get('fieldType'),
                     'status': ad_group_asset.get('status')
                 })
-        except Exception:
-            pass  # Ad group assets query failed
+        except Exception as e:
+            logger.warning(f"Ad group assets query failed: {e}")
 
     return result
 
